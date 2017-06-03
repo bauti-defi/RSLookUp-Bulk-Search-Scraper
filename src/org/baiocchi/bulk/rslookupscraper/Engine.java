@@ -28,8 +28,10 @@ public class Engine {
 	private int workerCount = 1;
 	private double accountCount = 0;
 	private double accountsChecked = 0;
+	private final long startTime;
 
 	private Engine() {
+		startTime = System.currentTimeMillis();
 		blocks = new LinkedBlockingQueue<AccountBlock>();
 		workers = new ArrayList<Thread>();
 		if (!Constants.TESTING) {
@@ -105,12 +107,12 @@ public class Engine {
 		for (int i = 2; i < (workerCount + 2); i++) {
 			workers.add(new Thread(new AccountChecker(i)));
 			try {
-				Thread.sleep(1000);
+				Thread.sleep(5000);
 			} catch (InterruptedException e) {
 				e.printStackTrace();
 			}
 		}
-		System.out.println("Workers created...");
+		System.out.println("Workers created!");
 	}
 
 	private void startWorkers() {
@@ -123,11 +125,12 @@ public class Engine {
 				e.printStackTrace();
 			}
 		}
-		System.out.println("Workers started...");
+		System.out.println("Workers started!");
 	}
 
 	public synchronized void processData(DataBlock block) {
 		dataSaver.processData(block);
+		accountsChecked += Constants.BLOCK_LIMIT;
 		System.out.println(getProgressString());
 	}
 
@@ -143,12 +146,16 @@ public class Engine {
 				builder.append("_");
 			}
 		}
-		builder.append("]\n(DONE: " + (percentDone * 100) + "%, " + accountsChecked + ")");
+		builder.append("]\nDONE: " + (percentDone * 100) + "%, " + accountsChecked + "("
+				+ getPerHour((int) accountsChecked) + " P/Hr)");
 		return builder.toString();
 	}
 
+	private int getPerHour(final int gained) {
+		return (int) ((gained) * 3600000D / (System.currentTimeMillis() - startTime));
+	}
+
 	public synchronized LinkedBlockingQueue<AccountBlock> getBlocks() {
-		accountsChecked += Constants.BLOCK_LIMIT;
 		return blocks;
 	}
 

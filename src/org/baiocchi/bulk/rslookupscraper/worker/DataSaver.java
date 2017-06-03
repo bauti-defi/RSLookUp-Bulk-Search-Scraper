@@ -38,7 +38,7 @@ public class DataSaver extends Worker {
 
 	private void write(String line) {
 		try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(
-				new FileOutputStream(saveDirectory + "/RSLookUp-Dump.csv", true), StandardCharsets.UTF_8));) {
+				new FileOutputStream(saveDirectory + "/RSLookUp-Dump.txt", true), StandardCharsets.UTF_8));) {
 			writer.write(line);
 			writer.newLine();
 		} catch (IOException e) {
@@ -58,7 +58,7 @@ public class DataSaver extends Worker {
 			for (Data data : saveData.getData()) {
 				write(data.toString());
 			}
-			log("Data saved to file!");
+			log("Data saved to file!", Type.VERBOSE);
 		}
 	}
 

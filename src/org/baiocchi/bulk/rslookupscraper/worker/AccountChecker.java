@@ -60,7 +60,7 @@ public class AccountChecker extends Worker {
 			}
 			switch (currentPage.getUrl().toExternalForm()) {
 			case Constants.LOGIN_URL:
-				log("Handling login...");
+				log("Handling login...", Type.VERBOSE);
 				final HtmlForm form = currentPage.getFirstByXPath("//form[@action='https://rslookup.com/login']");
 				if (form != null) {
 					final HtmlTextInput usernameField = form.getInputByName("username");
@@ -73,13 +73,13 @@ public class AccountChecker extends Worker {
 							currentPage = loginButton.click();
 						} catch (IOException e1) {
 							e1.printStackTrace();
-							log("Failed to handle login!");
+							log("Failed to handle login!", Type.ERROR);
 						}
 						waitForJavascriptToExecute();
-						log("Login handled!");
+						log("Login handled!", Type.VERBOSE);
 						break;
 					}
-					log("Failed to handle login!");
+					log("Failed to handle login!", Type.ERROR);
 				}
 				break;
 			case Constants.SEARCH_URL:
@@ -89,7 +89,7 @@ public class AccountChecker extends Worker {
 						final HtmlButton searchButton = (HtmlButton) currentPage
 								.getFirstByXPath(Constants.SEARCH_BUTTON_XPATH);
 						if (searchField != null && searchField.isDisplayed()) {
-							log("Searching...");
+							log("Searching...", Type.VERBOSE);
 							StringBuilder searchString = new StringBuilder();
 							for (final Account account : block.getAccounts()) {
 								searchString.append(account.getUsername() + "\n");
@@ -99,23 +99,24 @@ public class AccountChecker extends Worker {
 								currentPage = searchButton.click();
 							} catch (IOException e1) {
 								e1.printStackTrace();
-								log("Failed to search!");
+								log("Failed to search!", Type.ERROR);
 								break;
 							}
 							waitForJavascriptToExecute();
 							handlingJavascript = true;
-							log("Search query finished!");
+							expandCounter = 0;
+							log("Search query finished!", Type.VERBOSE);
 						}
 					} else if (handlingJavascript) {
 						if (currentPage.asText().toLowerCase().contains("view results...")) {
 							if (expandCounter >= 7) {
-								log("Detected an expantion error. Restarting client!");
+								log("Detected an expantion error!", Type.ERROR);
 								client = getNewClient();
 								break;
 							}
-							final List<HtmlSpan> greenTexts = currentPage.getByXPath("//span");
+							final List<HtmlSpan> greenTexts = currentPage.getByXPath("//div[@class='content']/span");
 							if (greenTexts != null && !greenTexts.isEmpty()) {
-								log("Expanding tables...");
+								log("Expanding tables...", Type.VERBOSE);
 								for (final HtmlSpan greenText : greenTexts) {
 									if (greenText.isDisplayed() && greenText.getId().toLowerCase().contains("result")
 											&& !greenText.getId().toLowerCase().contains("hideresult")) {
@@ -130,11 +131,11 @@ public class AccountChecker extends Worker {
 								}
 								waitForJavascriptToExecute();
 								expandCounter++;
-								log("Tables expanded!");
+								log("Tables expanded!", Type.VERBOSE);
 							}
 						}
 						if (currentPage.asText().toLowerCase().contains("search in hash db")) {
-							log("Handling hashes...");
+							log("Handling hashes...", Type.VERBOSE);
 							final List<HtmlSpan> greenTexts = currentPage
 									.getByXPath("//table[@class='table table-bordered']/tbody/tr/td/span");
 							if (greenTexts != null && !greenTexts.isEmpty()) {
@@ -147,9 +148,9 @@ public class AccountChecker extends Worker {
 								}
 								waitForJavascriptToExecute();
 							}
-							log("Hashes handled!");
+							log("Hashes handled!", Type.VERBOSE);
 						} else {
-							log("Scraping results...");
+							log("Scraping results...", Type.VERBOSE);
 							final List<HtmlTableBody> tableBodies = currentPage.getByXPath("//tbody");
 							if (tableBodies != null && !tableBodies.isEmpty()) {
 								final DataBlock block = new DataBlock();
@@ -162,27 +163,56 @@ public class AccountChecker extends Worker {
 													switch (cell.getIndex()) {
 													case 0:
 														if (!cell.asText().isEmpty()) {
-															dataEntry.setDatabase(cell.asText());
+															if (cell.asText().length() <= 50) {
+																dataEntry.setDatabase(cell.asText());
+															} else {
+																log("Database Cell format exception detected!",
+																		Type.ERROR);
+																client = getNewClient();
+															}
 														}
 														break;
 													case 1:
 														if (!cell.asText().isEmpty()) {
-															dataEntry.setUsername(cell.asText());
+															if (cell.asText().length() <= 50) {
+																dataEntry.setUsername(cell.asText());
+															} else {
+																log("Username Cell format exception detected!",
+																		Type.ERROR);
+																client = getNewClient();
+															}
 														}
 														break;
 													case 2:
 														if (!cell.asText().isEmpty()) {
-															dataEntry.setEmail(cell.asText());
+															if (cell.asText().length() <= 50) {
+																dataEntry.setEmail(cell.asText());
+															} else {
+																log("Email Cell format exception detected!",
+																		Type.ERROR);
+																client = getNewClient();
+															}
 														}
 														break;
 													case 3:
 														if (!cell.asText().isEmpty()) {
-															dataEntry.setPassword(cell.asText());
+															if (cell.asText().length() <= 50) {
+																dataEntry.setPassword(cell.asText());
+															} else {
+																log("Password Cell format exception detected!",
+																		Type.ERROR);
+																client = getNewClient();
+															}
 														}
 														break;
 													case 4:
 														if (!cell.asText().isEmpty()) {
-															dataEntry.setIP(cell.asText());
+															if (cell.asText().length() <= 50) {
+																dataEntry.setIP(cell.asText());
+															} else {
+																log("IP Cell format exception detected!", Type.ERROR);
+																client = getNewClient();
+															}
 														}
 														break;
 													}
@@ -193,17 +223,18 @@ public class AccountChecker extends Worker {
 									}
 								}
 								Engine.getInstance().processData(block);
+								expandCounter = 0;
 								this.block = null;
 								handlingJavascript = false;
 							}
-							log("Data scraped!");
+							log("Data scraped!", Type.VERBOSE);
 						}
 					}
 				}
 				break;
 			default:
 				try {
-					log("Going back to search page...");
+					log("Going back to search page...", Type.VERBOSE);
 					currentPage = client.getPage(Constants.SEARCH_URL);
 				} catch (FailingHttpStatusCodeException | IOException e) {
 					e.printStackTrace();
@@ -211,6 +242,7 @@ public class AccountChecker extends Worker {
 				break;
 			}
 		}
+
 	}
 
 	private void waitForJavascriptToExecute() {
@@ -230,6 +262,7 @@ public class AccountChecker extends Worker {
 	}
 
 	private WebClient getNewClient() {
+		log("Starting new client...", Type.VERBOSE);
 		expandCounter = 0;
 		handlingJavascript = false;
 		WebClient client = new WebClient(BrowserVersion.CHROME);
@@ -237,8 +270,10 @@ public class AccountChecker extends Worker {
 		try {
 			currentPage = client.getPage(Constants.SEARCH_URL);
 		} catch (FailingHttpStatusCodeException | IOException e) {
+			log("Failed to start new client!", Type.ERROR);
 			e.printStackTrace();
 		}
+		log("New client started!", Type.VERBOSE);
 		return client;
 	}
 
@@ -252,7 +287,6 @@ public class AccountChecker extends Worker {
 		cookieManager.addCookie(cookie);
 		webClient.setAjaxController(new NicelyResynchronizingAjaxController());
 		webClient.setAjaxController(new AjaxController());
-		webClient.waitForBackgroundJavaScript(1000);
 		webClient.getOptions().setGeolocationEnabled(false);
 		webClient.getOptions().setRedirectEnabled(true);
 		webClient.getOptions().setAppletEnabled(false);
