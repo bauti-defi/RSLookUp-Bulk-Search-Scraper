@@ -39,7 +39,6 @@ public class AccountChecker extends Worker {
 	private HtmlPage currentPage;
 	private boolean handlingJavascript = false;
 	private AccountBlock block = null;
-	private int expandCounter = 0;
 	private boolean running;
 
 	public AccountChecker(int id) {
@@ -104,36 +103,9 @@ public class AccountChecker extends Worker {
 							}
 							waitForJavascriptToExecute();
 							handlingJavascript = true;
-							expandCounter = 0;
 							log("Search query finished!", Type.VERBOSE);
 						}
 					} else if (handlingJavascript) {
-						if (currentPage.asText().toLowerCase().contains("view results...")) {
-							if (expandCounter >= 7) {
-								log("Detected an expantion error!", Type.ERROR);
-								client = getNewClient();
-								break;
-							}
-							final List<HtmlSpan> greenTexts = currentPage.getByXPath("//div[@class='content']/span");
-							if (greenTexts != null && !greenTexts.isEmpty()) {
-								log("Expanding tables...", Type.VERBOSE);
-								for (final HtmlSpan greenText : greenTexts) {
-									if (greenText.isDisplayed() && greenText.getId().toLowerCase().contains("result")
-											&& !greenText.getId().toLowerCase().contains("hideresult")) {
-										if (greenText.asXml().toString().contains("display")) {
-											if (!greenText.asXml().toString().contains("incline")) {
-												executeJavascript(greenText);
-											}
-										} else {
-											executeJavascript(greenText);
-										}
-									}
-								}
-								waitForJavascriptToExecute();
-								expandCounter++;
-								log("Tables expanded!", Type.VERBOSE);
-							}
-						}
 						if (currentPage.asText().toLowerCase().contains("search in hash db")) {
 							log("Handling hashes...", Type.VERBOSE);
 							final List<HtmlSpan> greenTexts = currentPage
@@ -141,9 +113,7 @@ public class AccountChecker extends Worker {
 							if (greenTexts != null && !greenTexts.isEmpty()) {
 								for (final HtmlSpan greenText : greenTexts) {
 									if (greenText.asText().equalsIgnoreCase("Search in hash DB")) {
-										ScriptResult result = currentPage
-												.executeJavaScript(greenText.getOnClickAttribute());
-										currentPage = (HtmlPage) result.getNewPage();
+										executeJavascript(greenText);
 									}
 								}
 								waitForJavascriptToExecute();
@@ -223,7 +193,6 @@ public class AccountChecker extends Worker {
 									}
 								}
 								Engine.getInstance().processData(block);
-								expandCounter = 0;
 								this.block = null;
 								handlingJavascript = false;
 							}
@@ -263,7 +232,6 @@ public class AccountChecker extends Worker {
 
 	private WebClient getNewClient() {
 		log("Starting new client...", Type.VERBOSE);
-		expandCounter = 0;
 		handlingJavascript = false;
 		WebClient client = new WebClient(BrowserVersion.CHROME);
 		setWebClientSettings(client);
