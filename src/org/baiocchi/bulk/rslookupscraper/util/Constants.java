@@ -15,6 +15,7 @@ public class Constants {
 	public final static String SEARCH_FIELD_XPATH = "//*[@id=\"query\"]";
 	public final static String SEARCH_RESULTS_TABLE_XPATH = "//*[@id=\"results\"]/table";
 	public final static String SEARCH_BUTTON_XPATH = "//button[1]";
-	public final static int BLOCK_LIMIT = 50;
+	public final static int BLOCK_LIMIT = 25;
 	public final static boolean TESTING = false;
+	public final static boolean LOGGING = true;
 }

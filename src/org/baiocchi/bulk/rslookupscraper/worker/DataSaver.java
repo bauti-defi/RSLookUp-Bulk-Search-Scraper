@@ -15,7 +15,6 @@ public class DataSaver extends Worker {
 
 	private LinkedBlockingQueue<DataBlock> data;
 	private final String saveDirectory;
-	private boolean running;
 
 	public DataSaver(int id, File file) {
 		super(id);
@@ -58,7 +57,7 @@ public class DataSaver extends Worker {
 			for (Data data : saveData.getData()) {
 				write(data.toString());
 			}
-			log("Data saved to file!", Type.VERBOSE);
+			print("Data saved to file!", Type.VERBOSE);
 		}
 	}
 

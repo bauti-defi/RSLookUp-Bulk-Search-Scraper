@@ -2,8 +2,8 @@ package org.baiocchi.bulk.rslookupscraper.util;
 
 public class Data {
 
-	private String database;
-	private String username;
+	private String database = "";
+	private String username = "";
 	private String password = "";
 	private String email = "";
 	private String IP = "";

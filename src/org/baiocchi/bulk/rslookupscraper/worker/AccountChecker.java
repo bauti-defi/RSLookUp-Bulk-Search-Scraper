@@ -3,6 +3,7 @@ package org.baiocchi.bulk.rslookupscraper.worker;
 import java.io.IOException;
 import java.util.Calendar;
 import java.util.List;
+import java.util.TimerTask;
 import java.util.logging.Level;
 
 import org.apache.commons.logging.LogFactory;
@@ -16,6 +17,7 @@ import org.baiocchi.bulk.rslookupscraper.util.DataBlock;
 import com.gargoylesoftware.htmlunit.AjaxController;
 import com.gargoylesoftware.htmlunit.BrowserVersion;
 import com.gargoylesoftware.htmlunit.CookieManager;
+import com.gargoylesoftware.htmlunit.ElementNotFoundException;
 import com.gargoylesoftware.htmlunit.FailingHttpStatusCodeException;
 import com.gargoylesoftware.htmlunit.NicelyResynchronizingAjaxController;
 import com.gargoylesoftware.htmlunit.ScriptResult;
@@ -39,12 +41,31 @@ public class AccountChecker extends Worker {
 	private HtmlPage currentPage;
 	private boolean handlingJavascript = false;
 	private AccountBlock block = null;
-	private boolean running;
+	private int failsafe = 0;
+	private boolean forceScrape;
+	private int timerFlag = 0;
+	private int currentTimerFlag = 0;
 
 	public AccountChecker(int id) {
 		super(id);
-		client = getNewClient();
+		startNewClient();
 		running = true;
+		setFailsafeTimer(new TimerTask() {
+
+			@Override
+			public void run() {
+				if (timerFlag == currentTimerFlag) {
+					running = false;
+					print("Failsafe timer triggered!", Type.ERROR);
+					log(currentPage.asXml());
+					startNewClient();
+					log(currentPage.asXml());
+					running = true;
+				}
+				timerFlag = currentTimerFlag;
+			}
+
+		}, 180000, 180000);
 	}
 
 	@Override
@@ -58,9 +79,41 @@ public class AccountChecker extends Worker {
 				}
 			}
 			switch (currentPage.getUrl().toExternalForm()) {
+			case Constants.TERMS_URL:
+				print("Handling terms page...", Type.VERBOSE);
+				HtmlButton acceptButton = null;
+				try {
+					acceptButton = (HtmlButton) currentPage
+							.getFirstByXPath("//button[@class='btn btn-success btn-lg']");
+				} catch (ElementNotFoundException e) {
+					print("Terms form not found!", Type.ERROR);
+					continue;
+				}
+				if (acceptButton != null & acceptButton.isDisplayed()) {
+					try {
+						currentPage = acceptButton.click();
+					} catch (IOException e) {
+						print("Failed to handle terms page!", Type.ERROR);
+						log(currentPage.asXml());
+						e.printStackTrace();
+					}
+					// waitForJavascriptToExecute();
+					currentTimerFlag++;
+					print("Terms page handled!", Type.VERBOSE);
+					break;
+				}
+				print("Failed to handle terms page!", Type.ERROR);
+				break;
 			case Constants.LOGIN_URL:
-				log("Handling login...", Type.VERBOSE);
-				final HtmlForm form = currentPage.getFirstByXPath("//form[@action='https://rslookup.com/login']");
+				print("Handling login...", Type.VERBOSE);
+				HtmlForm form = null;
+				try {
+					form = currentPage.getFirstByXPath("//form[@action='https://rslookup.com/login']");
+				} catch (ElementNotFoundException e) {
+					print("Login form not found!", Type.ERROR);
+					log(currentPage.asXml());
+					continue;
+				}
 				if (form != null) {
 					final HtmlTextInput usernameField = form.getInputByName("username");
 					usernameField.setValueAttribute(Constants.USERNAME);
@@ -72,56 +125,98 @@ public class AccountChecker extends Worker {
 							currentPage = loginButton.click();
 						} catch (IOException e1) {
 							e1.printStackTrace();
-							log("Failed to handle login!", Type.ERROR);
+							print("Failed to handle login!", Type.ERROR);
+							log(currentPage.asXml());
 						}
 						waitForJavascriptToExecute();
-						log("Login handled!", Type.VERBOSE);
+						print("Login handled!", Type.VERBOSE);
+						currentTimerFlag++;
 						break;
 					}
-					log("Failed to handle login!", Type.ERROR);
+					print("Failed to handle login!", Type.ERROR);
 				}
 				break;
 			case Constants.SEARCH_URL:
-				if (currentPage != null) {
+				if (currentPage != null && currentPage.isDisplayed()) {
 					if (!handlingJavascript) {
-						final HtmlTextArea searchField = currentPage.getElementByName("query");
-						final HtmlButton searchButton = (HtmlButton) currentPage
-								.getFirstByXPath(Constants.SEARCH_BUTTON_XPATH);
+						HtmlTextArea searchField = null;
+						HtmlButton searchButton = null;
+						try {
+							searchField = currentPage.getElementByName("query");
+							searchButton = (HtmlButton) currentPage.getFirstByXPath(Constants.SEARCH_BUTTON_XPATH);
+						} catch (ElementNotFoundException e) {
+							print("Search elements not found!", Type.ERROR);
+							log(currentPage.asXml());
+							continue;
+						}
 						if (searchField != null && searchField.isDisplayed()) {
-							log("Searching...", Type.VERBOSE);
+							print("Searching...", Type.VERBOSE);
 							StringBuilder searchString = new StringBuilder();
 							for (final Account account : block.getAccounts()) {
 								searchString.append(account.getUsername() + "\n");
 							}
+							log(searchString.toString());
 							try {
 								searchField.type(searchString.toString());
-								currentPage = searchButton.click();
+								if (searchButton != null && searchButton.isDisplayed()) {
+									currentPage = searchButton.click();
+									log("Clicked search!");
+								}
 							} catch (IOException e1) {
 								e1.printStackTrace();
-								log("Failed to search!", Type.ERROR);
+								print("Failed to search!", Type.ERROR);
+								log(currentPage.asXml());
 								break;
 							}
 							waitForJavascriptToExecute();
-							handlingJavascript = true;
-							log("Search query finished!", Type.VERBOSE);
+							if (currentPage.asText()
+									.contains(block.getAccounts().get(block.getAccounts().size() - 1).getUsername())) {
+								handlingJavascript = true;
+								currentTimerFlag++;
+								print("Search query finished!", Type.VERBOSE);
+							}
 						}
 					} else if (handlingJavascript) {
-						if (currentPage.asText().toLowerCase().contains("search in hash db")) {
-							log("Handling hashes...", Type.VERBOSE);
-							final List<HtmlSpan> greenTexts = currentPage
-									.getByXPath("//table[@class='table table-bordered']/tbody/tr/td/span");
+						if (!forceScrape && currentPage.asXml().contains(
+								" style=\"color: green; font-weight: bold; cursor: pointer; font-size: 10px;\"")) {
+							print("Handling hashes...", Type.VERBOSE);
+							if (failsafe > 5) {
+								print("Error handling hashes! Initiating force scrape!", Type.ERROR);
+								forceScrape = true;
+								currentTimerFlag++;
+								break;
+							}
+							List<HtmlSpan> greenTexts = null;
+							try {
+								greenTexts = currentPage
+										.getByXPath("//table[@class='table table-bordered']/tbody/tr/td/span");
+							} catch (ElementNotFoundException e) {
+								print("Green texts not found!", Type.ERROR);
+								log(currentPage.asXml());
+								continue;
+							}
 							if (greenTexts != null && !greenTexts.isEmpty()) {
 								for (final HtmlSpan greenText : greenTexts) {
-									if (greenText.asText().equalsIgnoreCase("Search in hash DB")) {
+									if (greenText.asXml().contains(
+											" style=\"color: green; font-weight: bold; cursor: pointer; font-size: 10px;\"")) {
 										executeJavascript(greenText);
 									}
 								}
 								waitForJavascriptToExecute();
+								failsafe++;
+								currentTimerFlag++;
 							}
-							log("Hashes handled!", Type.VERBOSE);
+							print("Hashes handled!", Type.VERBOSE);
 						} else {
-							log("Scraping results...", Type.VERBOSE);
-							final List<HtmlTableBody> tableBodies = currentPage.getByXPath("//tbody");
+							print("Scraping results...", Type.VERBOSE);
+							List<HtmlTableBody> tableBodies = null;
+							try {
+								tableBodies = currentPage.getByXPath("//tbody");
+							} catch (ElementNotFoundException e) {
+								print("Tables not found!", Type.ERROR);
+								log(currentPage.asXml());
+								continue;
+							}
 							if (tableBodies != null && !tableBodies.isEmpty()) {
 								final DataBlock block = new DataBlock();
 								for (final HtmlTableBody tableBody : tableBodies) {
@@ -136,9 +231,10 @@ public class AccountChecker extends Worker {
 															if (cell.asText().length() <= 50) {
 																dataEntry.setDatabase(cell.asText());
 															} else {
-																log("Database Cell format exception detected!",
+																print("Database Cell format exception detected!",
 																		Type.ERROR);
-																client = getNewClient();
+																log(cell.asText());
+																continue;
 															}
 														}
 														break;
@@ -147,9 +243,10 @@ public class AccountChecker extends Worker {
 															if (cell.asText().length() <= 50) {
 																dataEntry.setUsername(cell.asText());
 															} else {
-																log("Username Cell format exception detected!",
+																print("Username Cell format exception detected!",
 																		Type.ERROR);
-																client = getNewClient();
+																log(cell.asText());
+																continue;
 															}
 														}
 														break;
@@ -158,9 +255,10 @@ public class AccountChecker extends Worker {
 															if (cell.asText().length() <= 50) {
 																dataEntry.setEmail(cell.asText());
 															} else {
-																log("Email Cell format exception detected!",
+																print("Email Cell format exception detected!",
 																		Type.ERROR);
-																client = getNewClient();
+																log(cell.asText());
+																continue;
 															}
 														}
 														break;
@@ -169,9 +267,10 @@ public class AccountChecker extends Worker {
 															if (cell.asText().length() <= 50) {
 																dataEntry.setPassword(cell.asText());
 															} else {
-																log("Password Cell format exception detected!",
+																print("Password Cell format exception detected!",
 																		Type.ERROR);
-																client = getNewClient();
+																log(cell.asText());
+																continue;
 															}
 														}
 														break;
@@ -180,8 +279,9 @@ public class AccountChecker extends Worker {
 															if (cell.asText().length() <= 50) {
 																dataEntry.setIP(cell.asText());
 															} else {
-																log("IP Cell format exception detected!", Type.ERROR);
-																client = getNewClient();
+																print("IP Cell format exception detected!", Type.ERROR);
+																log(cell.asText());
+																continue;
 															}
 														}
 														break;
@@ -192,37 +292,53 @@ public class AccountChecker extends Worker {
 										}
 									}
 								}
+								currentTimerFlag++;
 								Engine.getInstance().processData(block);
 								this.block = null;
-								handlingJavascript = false;
+								resetVariables();
 							}
-							log("Data scraped!", Type.VERBOSE);
+							print("Data scraped!", Type.VERBOSE);
 						}
 					}
 				}
 				break;
 			default:
-				try {
-					log("Going back to search page...", Type.VERBOSE);
-					currentPage = client.getPage(Constants.SEARCH_URL);
-				} catch (FailingHttpStatusCodeException | IOException e) {
-					e.printStackTrace();
-				}
+				currentTimerFlag++;
+				log(currentPage.asXml());
+				goToSearchPage();
+				log(currentPage.asXml());
 				break;
 			}
 		}
+		do {
+			print("Pausing!", Type.VERBOSE);
+			sleep(3000);
+		} while (!running);
+		if (running) {
+			print("Resuming!", Type.VERBOSE);
+			run();
+		}
+	}
 
+	private void goToSearchPage() {
+		try {
+			print("Going back to search page...", Type.VERBOSE);
+			currentPage.getEnclosingWindow().getJobManager().removeAllJobs();
+			currentPage = client.getPage(Constants.SEARCH_URL);
+			waitForJavascriptToExecute();
+			sleep(8000);
+		} catch (FailingHttpStatusCodeException | IOException e) {
+			e.printStackTrace();
+		}
 	}
 
 	private void waitForJavascriptToExecute() {
 		JavaScriptJobManager manager = currentPage.getEnclosingWindow().getJobManager();
+		log("Waiting on javascript...");
 		while (manager.getJobCount() > 0) {
-			try {
-				Thread.sleep(300);
-			} catch (InterruptedException e) {
-				e.printStackTrace();
-			}
+			sleep(500);
 		}
+		log("Javascript finished!");
 	}
 
 	private void executeJavascript(HtmlElement element) {
@@ -230,19 +346,35 @@ public class AccountChecker extends Worker {
 		currentPage = (HtmlPage) result.getNewPage();
 	}
 
-	private WebClient getNewClient() {
-		log("Starting new client...", Type.VERBOSE);
+	private void resetVariables() {
+		failsafe = 0;
+		forceScrape = false;
 		handlingJavascript = false;
-		WebClient client = new WebClient(BrowserVersion.CHROME);
+	}
+
+	private void startNewClient() {
+		print("Starting new client...", Type.VERBOSE);
+		resetVariables();
+		if (client != null) {
+			client.close();
+		}
+		WebClient client = new WebClient(BrowserVersion.BEST_SUPPORTED);
 		setWebClientSettings(client);
+		this.client = client;
 		try {
-			currentPage = client.getPage(Constants.SEARCH_URL);
+			currentPage = this.client.getPage(Constants.SEARCH_URL);
 		} catch (FailingHttpStatusCodeException | IOException e) {
-			log("Failed to start new client!", Type.ERROR);
 			e.printStackTrace();
 		}
-		log("New client started!", Type.VERBOSE);
-		return client;
+		print("New client started!", Type.VERBOSE);
+	}
+
+	private void sleep(long millis) {
+		try {
+			Thread.sleep(millis);
+		} catch (InterruptedException e) {
+			e.printStackTrace();
+		}
 	}
 
 	private void setWebClientSettings(WebClient webClient) {
@@ -254,8 +386,11 @@ public class AccountChecker extends Worker {
 		Cookie cookie = new Cookie("rslookup.com", "tos", "true", "/", cal.getTime(), false);
 		cookieManager.addCookie(cookie);
 		webClient.setAjaxController(new NicelyResynchronizingAjaxController());
+		webClient.getOptions().setSSLClientProtocols(new String[] { "TLSv1.2" });
 		webClient.setAjaxController(new AjaxController());
 		webClient.getOptions().setGeolocationEnabled(false);
+		webClient.getOptions().setUseInsecureSSL(true);
+		webClient.getOptions().setTimeout(180000);
 		webClient.getOptions().setRedirectEnabled(true);
 		webClient.getOptions().setAppletEnabled(false);
 		webClient.getOptions().setPrintContentOnFailingStatusCode(false);
@@ -265,7 +400,7 @@ public class AccountChecker extends Worker {
 		webClient.getOptions().setJavaScriptEnabled(true);
 		webClient.getOptions().setDownloadImages(false);
 		webClient.getCache().clear();
-		webClient.setJavaScriptTimeout(30000);
+		webClient.setJavaScriptTimeout(60000);
 		webClient.getOptions().setPopupBlockerEnabled(true);
 		webClient.getOptions().isDoNotTrackEnabled();
 		webClient.getOptions().setUseInsecureSSL(true);
